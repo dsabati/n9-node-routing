@@ -16,6 +16,29 @@ export type N9HttpClientQueryParams =
 	| Record<string, string | number | boolean | string[] | number[] | boolean[]>
 	| object;
 
+export interface N9HttpClientSensitiveHeadersOptions {
+	/**
+	 * Should the given sensitive headers be censored
+	 *
+	 * @default true
+	 */
+	alterSensitiveHeaders?: boolean;
+
+	/**
+	 * String or regexp to use to match the value to censor. All matching characters will be replaced with the given censorship.
+	 *
+	 * @default /(?!^)[\s\S](?!$)/ (censor all characters except for the first and last)
+	 */
+	alteringFormat?: string | RegExp;
+
+	/**
+	 * Headers to censor.
+	 *
+	 * @default ['Authorization']
+	 */
+	sensitiveHeaders?: string[];
+}
+
 export class N9HttpClient {
 	private static getUriFromUrlParts(url: string | string[]): string {
 		let uri;
@@ -42,11 +65,34 @@ export class N9HttpClient {
 		const status = e.response?.statusCode;
 		return { code, status };
 	}
+
+	private static censorHeaders(
+		headers: object,
+		sensitiveHeadersOptions: N9HttpClientSensitiveHeadersOptions,
+	): object {
+		if (
+			headers &&
+			sensitiveHeadersOptions.alterSensitiveHeaders &&
+			Object.keys(headers).length > 0
+		) {
+			for (const header of sensitiveHeadersOptions.sensitiveHeaders) {
+				if (!headers[header]) continue;
+
+				const uncensoredHeader = headers[header] as string;
+				headers[header] = uncensoredHeader.replace(sensitiveHeadersOptions.alteringFormat, '*');
+			}
+		}
+
+		return headers;
+	}
+
 	private readonly baseOptions: Options;
+	private readonly baseSensitiveHeadersOptions: N9HttpClientSensitiveHeadersOptions;
 
 	constructor(
 		private readonly logger: N9Log = (global as any).log,
 		baseOptions?: Options,
+		baseSensitiveHeadersOptions?: N9HttpClientSensitiveHeadersOptions,
 		private maxBodyLengthToLogError: number = 100,
 	) {
 		this.baseOptions = {
@@ -76,6 +122,13 @@ export class N9HttpClient {
 			},
 			...baseOptions,
 		};
+
+		this.baseSensitiveHeadersOptions = {
+			alterSensitiveHeaders: true,
+			sensitiveHeaders: ['Authorization'],
+			alteringFormat: /(?!^)[\s\S](?!$)/g,
+			...baseSensitiveHeadersOptions,
+		};
 	}
 
 	/**
@@ -86,8 +139,17 @@ export class N9HttpClient {
 		queryParams?: N9HttpClientQueryParams,
 		headers: object = {},
 		options: Options = {},
+		sensitiveHeadersOptions: N9HttpClientSensitiveHeadersOptions = {},
 	): Promise<T> {
-		return this.request<T>('get', url, queryParams, headers, undefined, options);
+		return this.request<T>(
+			'get',
+			url,
+			queryParams,
+			headers,
+			undefined,
+			options,
+			sensitiveHeadersOptions,
+		);
 	}
 
 	public async post<T>(
@@ -96,8 +158,17 @@ export class N9HttpClient {
 		queryParams?: N9HttpClientQueryParams,
 		headers: object = {},
 		options: Options = {},
+		sensitiveHeadersOptions: N9HttpClientSensitiveHeadersOptions = {},
 	): Promise<T> {
-		return this.request<T>('post', url, queryParams, headers, body, options);
+		return this.request<T>(
+			'post',
+			url,
+			queryParams,
+			headers,
+			body,
+			options,
+			sensitiveHeadersOptions,
+		);
 	}
 
 	public async put<T>(
@@ -106,8 +177,17 @@ export class N9HttpClient {
 		queryParams?: N9HttpClientQueryParams,
 		headers: object = {},
 		options: Options = {},
+		sensitiveHeadersOptions: N9HttpClientSensitiveHeadersOptions = {},
 	): Promise<T> {
-		return this.request<T>('put', url, queryParams, headers, body, options);
+		return this.request<T>(
+			'put',
+			url,
+			queryParams,
+			headers,
+			body,
+			options,
+			sensitiveHeadersOptions,
+		);
 	}
 
 	public async delete<T>(
@@ -116,8 +196,17 @@ export class N9HttpClient {
 		queryParams?: N9HttpClientQueryParams,
 		headers: object = {},
 		options: Options = {},
+		sensitiveHeadersOptions: N9HttpClientSensitiveHeadersOptions = {},
 	): Promise<T> {
-		return this.request<T>('delete', url, queryParams, headers, body, options);
+		return this.request<T>(
+			'delete',
+			url,
+			queryParams,
+			headers,
+			body,
+			options,
+			sensitiveHeadersOptions,
+		);
 	}
 
 	public async options<T>(
@@ -125,8 +214,17 @@ export class N9HttpClient {
 		queryParams?: N9HttpClientQueryParams,
 		headers: object = {},
 		options: Options = {},
+		sensitiveHeadersOptions: N9HttpClientSensitiveHeadersOptions = {},
 	): Promise<T> {
-		return this.request<T>('options', url, queryParams, headers, undefined, options);
+		return this.request<T>(
+			'options',
+			url,
+			queryParams,
+			headers,
+			undefined,
+			options,
+			sensitiveHeadersOptions,
+		);
 	}
 
 	public async patch<T>(
@@ -135,8 +233,17 @@ export class N9HttpClient {
 		queryParams?: N9HttpClientQueryParams,
 		headers: object = {},
 		options: Options = {},
+		sensitiveHeadersOptions: N9HttpClientSensitiveHeadersOptions = {},
 	): Promise<T> {
-		return this.request<T>('patch', url, queryParams, headers, body, options);
+		return this.request<T>(
+			'patch',
+			url,
+			queryParams,
+			headers,
+			body,
+			options,
+			sensitiveHeadersOptions,
+		);
 	}
 
 	public async head(
@@ -155,6 +262,7 @@ export class N9HttpClient {
 		headers: object = {},
 		body?: any,
 		options: Options = {},
+		sensitiveHeadersOptions: N9HttpClientSensitiveHeadersOptions = {},
 	): Promise<T> {
 		const uri = N9HttpClient.getUriFromUrlParts(url);
 
@@ -194,14 +302,20 @@ export class N9HttpClient {
 				durationMs,
 			});
 
+			const censorshipOptions: N9HttpClientSensitiveHeadersOptions = {
+				...this.baseSensitiveHeadersOptions,
+				...sensitiveHeadersOptions,
+			};
+			const censoredHeaders = N9HttpClient.censorHeaders(sentHeaders, censorshipOptions);
+
 			throw new N9Error(code.toString(), status, {
 				uri,
 				method,
 				queryParams,
-				headers,
 				durationMs,
 				code: e.code ?? e.message,
 				body: body && bodyJSON.length < this.maxBodyLengthToLogError ? bodyJSON : undefined,
+				headers: censoredHeaders,
 				srcError: e.response?.body ?? e,
 			});
 		}
@@ -243,6 +357,7 @@ export class N9HttpClient {
 		url: string | string[],
 		// issue https://github.com/sindresorhus/got/issues/954#issuecomment-579468831
 		options?: Omit<Options, 'isStream' | 'responseType' | 'resolveBodyOnly'>,
+		sensitiveHeadersOptions: N9HttpClientSensitiveHeadersOptions = {},
 	): Promise<{ incomingMessage: IncomingMessage; responseAsStream: PassThrough }> {
 		const responseAsStream = new PassThrough();
 		const startTime = Date.now();
@@ -291,11 +406,17 @@ export class N9HttpClient {
 			});
 			const { code, status } = N9HttpClient.prepareErrorCodeAndStatus(e);
 
+			const censorshipOptions: N9HttpClientSensitiveHeadersOptions = {
+				...this.baseSensitiveHeadersOptions,
+				...sensitiveHeadersOptions,
+			};
+			const censoredHeaders = N9HttpClient.censorHeaders(options?.headers, censorshipOptions);
+
 			throw new N9Error(code?.toString() || 'unknown-error', status, {
 				uri,
 				method: options?.method,
 				code: e.code || code,
-				headers: options?.headers,
+				headers: censoredHeaders,
 				srcError: e,
 				responseTime: durationMs,
 			});

@@ -337,3 +337,105 @@ ava('Use HttpClient to call route with numeric error code', async (t: Assertions
 
 	await end(server, prometheusServer);
 });
+
+ava('Error should not display sensitive headers depending on options', async (t: Assertions) => {
+	stdMock.use({ print });
+	const { server, prometheusServer } = await N9NodeRouting({
+		hasProxy: true, // tell N9NodeRouting to parse `session` header
+		path: join(__dirname, 'fixtures/micro-mock-http-responses'),
+		http: {
+			port: 6001,
+		},
+		conf: defaultNodeRoutingConfOptions,
+	});
+
+	const httpClient = new N9HttpClient(new N9Log('test', { level: 'debug' }));
+	// eslint-disable-next-line @typescript-eslint/naming-convention
+	const defaultHeader = { sensitive: 'sensitive', Authorization: '1111-2222-3333' };
+
+	let error = await t.throwsAsync<N9Error>(
+		async () =>
+			await httpClient.get<string>(
+				'http://localhost:6001/numeric-error-code',
+				undefined,
+				defaultHeader,
+			),
+	);
+	t.is(error.message, '500', 'error code is not numerical');
+	t.like(
+		error.context.headers,
+		// eslint-disable-next-line @typescript-eslint/naming-convention
+		{ sensitive: 'sensitive', Authorization: '1************3' },
+		'Only Authorization is censored by default',
+	);
+
+	error = await t.throwsAsync<N9Error>(
+		async () =>
+			await httpClient.get<string>(
+				'http://localhost:6001/numeric-error-code',
+				undefined,
+				defaultHeader,
+				undefined,
+				{ sensitiveHeaders: ['sensitive', 'Authorization'] },
+			),
+	);
+	t.like(
+		error.context.headers,
+		// eslint-disable-next-line @typescript-eslint/naming-convention
+		{ sensitive: 's*******e', Authorization: '1************3' },
+		'Both sensitive and Authorization are censored',
+	);
+
+	error = await t.throwsAsync<N9Error>(
+		async () =>
+			await httpClient.get<string>(
+				'http://localhost:6001/numeric-error-code',
+				undefined,
+				defaultHeader,
+				undefined,
+				{ sensitiveHeaders: ['sensitive'] },
+			),
+	);
+	t.like(
+		error.context.headers,
+		// eslint-disable-next-line @typescript-eslint/naming-convention
+		{ sensitive: 's*******e', Authorization: '1111-2222-3333' },
+		'Only sensitive is censored',
+	);
+
+	error = await t.throwsAsync<N9Error>(
+		async () =>
+			await httpClient.get<string>(
+				'http://localhost:6001/numeric-error-code',
+				undefined,
+				defaultHeader,
+				undefined,
+				{ alteringFormat: /(?<=.{4})[^-]/g },
+			),
+	);
+	t.like(
+		error.context.headers,
+		// eslint-disable-next-line @typescript-eslint/naming-convention
+		{ sensitive: 'sensitive', Authorization: '1111-****-****' },
+		'Authorization should be censored partially',
+	);
+
+	error = await t.throwsAsync<N9Error>(
+		async () =>
+			await httpClient.get<string>(
+				'http://localhost:6001/numeric-error-code',
+				undefined,
+				defaultHeader,
+				undefined,
+				{ alterSensitiveHeaders: false },
+			),
+	);
+	t.like(
+		error.context.headers,
+		// eslint-disable-next-line @typescript-eslint/naming-convention
+		{ sensitive: 'sensitive', Authorization: '1111-2222-3333' },
+		'All headers are uncensored',
+	);
+
+	await end(server, prometheusServer);
+});
